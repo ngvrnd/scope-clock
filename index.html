@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A green oscilloscope clock in the browser, with numerals and letters drawn from sine-and-cosine arcs and straight strokes the way a scope clock traces them.">
+<meta property="og:title" content="Green Scope Clock">
+<meta property="og:description" content="A green oscilloscope clock in the browser, with numerals and letters drawn from sine-and-cosine arcs and straight strokes the way a scope clock traces them.">
+<meta property="og:type" content="website">
+<title>Green Scope Clock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a round CRT set in a dark instrument panel, knobs-style controls beneath. Single dark theme by choice. */
+:root {
+  --room: #121411;
+  --panel: #23261f;
+  --panel-edge: #363a30;
+  --bezel: #0b0c0a;
+  --tube: #040805;
+  --phosphor: #6dff95;
+  --phosphor-dim: #2f8a4a;
+  --label: #b4b9a6;
+  --label-dim: #767b6b;
+  --key: #31352b;
+  --key-hi: #3e4337;
+  --font-ui: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+html, body { background: var(--room); color: var(--label); }
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  padding-block: 24px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 18px; }
+.instrument { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 16px; padding: clamp(14px, 4vw, 36px); display: grid; gap: 14px; justify-items: center; }
+.bezel { width: 100%; max-width: 560px; aspect-ratio: 1; border-radius: 50%; background: var(--bezel); padding: 4%; }
+.tube { position: relative; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; background: var(--tube); }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.plate { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; width: 100%; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--label-dim); }
+.modes, .keys { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px 24px; }
+.ctl { display: grid; gap: 6px; min-width: 0; }
+.ctl label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--label-dim); display: flex; justify-content: space-between; }
+.ctl output { color: var(--phosphor); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--phosphor-dim); }
+button {
+  font-family: var(--font-ui); font-size: 12px; font-weight: 500; letter-spacing: 0.06em;
+  background: var(--key); color: var(--label); border: 1px solid var(--panel-edge); border-bottom-width: 3px;
+  border-radius: 6px; padding: 8px 12px; cursor: pointer;
+}
+button:hover { background: var(--key-hi); }
+button:active { transform: translateY(1px); border-bottom-width: 2px; }
+button[aria-pressed=true] { color: var(--phosphor); border-color: var(--phosphor-dim); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--phosphor); outline-offset: 2px; }
+.copymsg { font-size: 12px; color: var(--phosphor); min-width: 0; overflow-wrap: anywhere; user-select: all; }
+.notes { color: var(--label-dim); font-size: 13px; line-height: 1.65; display: grid; gap: 8px; }
+.notes p { margin: 0; max-width: 68ch; }
+.notes b { color: var(--label); font-weight: 500; }
+.notes a { color: var(--phosphor); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="instrument">
+    <div class="bezel"><div class="tube"><canvas id="scope" width="900" height="900" aria-label="Oscilloscope clock face showing the current time"></canvas></div></div>
+    <div class="plate"><span>X: sin · Y: cos</span><span id="plateTime">P31 phosphor</span></div>
+  </div>
+
+  <div class="modes" aria-label="Face">
+    <button data-mode="analog">Analog</button>
+    <button data-mode="digital">Digital</button>
+    <button data-mode="both">Both</button>
+    <button data-mode="font">Font sheet</button>
+    <button id="h24" aria-pressed="false">24-hour</button>
+    <button id="retrace" aria-pressed="false">Show retrace</button>
+  </div>
+
+  <div class="controls">
+    <div class="ctl"><label for="bright">Intensity <output id="brightOut"></output></label><input type="range" id="bright" min="1" max="10" step="1" value="6"></div>
+    <div class="ctl"><label for="focus">Focus <output id="focusOut"></output></label><input type="range" id="focus" min="1" max="10" step="1" value="7"></div>
+    <div class="ctl"><label for="persist">Persistence <output id="persistOut"></output></label><input type="range" id="persist" min="0" max="9" step="1" value="4"></div>
+    <div class="ctl"><label for="hum">Hum <output id="humOut"></output></label><input type="range" id="hum" min="0" max="10" step="1" value="0"></div>
+  </div>
+
+  <div class="keys">
+    <button id="copy">Copy link</button>
+    <span id="copyMsg" class="copymsg" aria-live="polite"></span>
+  </div>
+
+  <div class="notes">
+    <p><b>Every character is made of two kinds of stroke:</b> straight lines, and arcs traced by putting a sine on the X deflection and a cosine on Y. Stretch one axis and the circle becomes an ellipse; start and stop partway round and you get the bowls of a 2, 3, 5 or S. That's how scope clocks draw such smooth numerals with so little hardware. Press Font sheet to see the whole character set.</p>
+    <p><b>Show retrace</b> lights up the jumps the beam makes between strokes, which a real clock blanks out. <b>Hum</b> adds the faint 60 Hz wobble of an old power supply.</p>
+    <p>Inspired by the NixieBunny scope clock. Companions: the <a href="https://ngvrnd.github.io/tek4006-cobweb/">Tek 4006 cobweb plot</a> and the <a href="https://ngvrnd.github.io/lorenz-iris/">Lorenz attractor on the IRIS</a>.</p>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $('scope'), g = cv.getContext('2d');
+  const N = 900, C = N / 2, R = 400;
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const L = (x0, y0, x1, y1) => ['L', x0, y0, x1, y1];
+  const A = (cx, cy, rx, ry, a0, a1) => ['A', cx, cy, rx, ry, a0, a1];
+  const O = (cx, cy, rx, ry) => A(cx, cy, rx, ry, 90, 450);
+
+  const GLYPHS = {
+    '0': [O(.5, 1, .5, 1)],
+    '1': [L(.25, 1.65, .55, 2), L(.55, 2, .55, 0), L(.25, 0, .85, 0)],
+    '2': [A(.5, 1.5, .5, .5, 160, -40), L(.883, 1.179, 0, 0), L(0, 0, 1, 0)],
+    '3': [A(.5, 1.52, .45, .48, 150, -90), A(.5, .5, .5, .5, 90, -150)],
+    '4': [L(.75, 0, .75, 2), L(.75, 2, 0, .6), L(0, .6, 1, .6)],
+    '5': [L(.9, 2, .12, 2), L(.12, 2, .117, 1.068), A(.5, .65, .5, .65, 140, -150)],
+    '6': [A(.5, 1, .5, 1, 70, 180), L(0, 1, 0, .6), O(.5, .6, .5, .6)],
+    '7': [L(0, 2, 1, 2), L(1, 2, .35, 0)],
+    '8': [O(.5, 1.5, .42, .5), O(.5, .5, .5, .5)],
+    '9': [O(.5, 1.4, .5, .6), L(1, 1.4, 1, 1), A(.5, 1, .5, 1, 0, -110)],
+    ':': [O(.5, .6, .09, .09), O(.5, 1.4, .09, .09)],
+    '.': [O(.5, .08, .08, .08)],
+    '-': [L(.15, 1, .85, 1)],
+    '/': [L(.1, 0, .9, 2)],
+    'A': [L(0, 0, .5, 2), L(.5, 2, 1, 0), L(.2, .8, .8, .8)],
+    'B': [L(0, 0, 0, 2), L(0, 2, .5, 2), A(.5, 1.5, .45, .5, 90, -90), L(.5, 1, 0, 1), A(.5, .5, .5, .5, 90, -90), L(.5, 0, 0, 0)],
+    'C': [A(.5, 1, .5, 1, 40, 320)],
+    'D': [L(0, 0, 0, 2), L(0, 2, .3, 2), A(.3, 1, .7, 1, 90, -90), L(.3, 0, 0, 0)],
+    'E': [L(1, 2, 0, 2), L(0, 2, 0, 0), L(0, 0, 1, 0), L(0, 1, .7, 1)],
+    'F': [L(1, 2, 0, 2), L(0, 2, 0, 0), L(0, 1, .7, 1)],
+    'G': [A(.5, 1, .5, 1, 40, 360), L(1, 1, .55, 1)],
+    'H': [L(0, 0, 0, 2), L(1, 0, 1, 2), L(0, 1, 1, 1)],
+    'I': [L(.5, 0, .5, 2), L(.2, 2, .8, 2), L(.2, 0, .8, 0)],
+    'J': [L(1, 2, 1, .5), A(.5, .5, .5, .5, 0, -180)],
+    'K': [L(0, 0, 0, 2), L(1, 2, 0, .8), L(.35, 1.15, 1, 0)],
+    'L': [L(0, 2, 0, 0), L(0, 0, 1, 0)],
+    'M': [L(0, 0, 0, 2), L(0, 2, .5, .8), L(.5, .8, 1, 2), L(1, 2, 1, 0)],
+    'N': [L(0, 0, 0, 2), L(0, 2, 1, 0), L(1, 0, 1, 2)],
+    'O': [O(.5, 1, .5, 1)],
+    'P': [L(0, 0, 0, 2), L(0, 2, .5, 2), A(.5, 1.5, .5, .5, 90, -90), L(.5, 1, 0, 1)],
+    'Q': [O(.5, 1, .5, 1), L(.6, .4, 1, 0)],
+    'R': [L(0, 0, 0, 2), L(0, 2, .5, 2), A(.5, 1.5, .5, .5, 90, -90), L(.5, 1, 0, 1), L(.4, 1, 1, 0)],
+    'S': [A(.5, 1.5, .5, .5, 30, 270), A(.5, .5, .5, .5, 90, -150)],
+    'T': [L(0, 2, 1, 2), L(.5, 2, .5, 0)],
+    'U': [L(0, 2, 0, .5), A(.5, .5, .5, .5, 180, 360), L(1, .5, 1, 2)],
+    'V': [L(0, 2, .5, 0), L(.5, 0, 1, 2)],
+    'W': [L(0, 2, .25, 0), L(.25, 0, .5, 1.2), L(.5, 1.2, .75, 0), L(.75, 0, 1, 2)],
+    'X': [L(0, 0, 1, 2), L(0, 2, 1, 0)],
+    'Y': [L(0, 2, .5, 1), L(1, 2, .5, 1), L(.5, 1, .5, 0)],
+    'Z': [L(0, 2, 1, 2), L(1, 2, 0, 0), L(0, 0, 1, 0)],
+    ' ': []
+  };
+  const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+  const hashQ = (() => { try { return new URLSearchParams(location.hash.slice(1)); } catch (e) { return new URLSearchParams(); } })();
+  const SLIDERS = ['bright', 'focus', 'persist', 'hum'];
+  SLIDERS.forEach(k => { if (hashQ.has(k) && isFinite(+hashQ.get(k))) $(k).value = hashQ.get(k); });
+  let mode = ['analog', 'digital', 'both', 'font'].includes(hashQ.get('mode')) ? hashQ.get('mode') : 'both';
+  let h24 = hashQ.get('h24') === '1';
+  let retrace = hashQ.get('retrace') === '1';
+
+  let path, retracePath, last, t = 0, hum = 0;
+  const wob = (x, y) => hum ? [x + hum * Math.sin(t * 377 + y * 0.03), y + hum * 0.6 * Math.sin(t * 377 + 1.3 + x * 0.03)] : [x, y];
+
+  function beamTo(x, y, start) {
+    const [px, py] = wob(x, y);
+    if (start) {
+      if (retrace && last) { retracePath.moveTo(last[0], last[1]); retracePath.lineTo(px, py); }
+      path.moveTo(px, py);
+    } else path.lineTo(px, py);
+    last = [px, py];
+  }
+
+  function line(x0, y0, x1, y1) {
+    const n = hum ? Math.max(2, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 12)) : 1;
+    beamTo(x0, y0, true);
+    for (let i = 1; i <= n; i++) beamTo(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, false);
+  }
+
+  function arc(cx, cy, rx, ry, a0, a1) {
+    const n = Math.max(8, Math.ceil(Math.abs(a1 - a0) / 5));
+    for (let i = 0; i <= n; i++) {
+      const a = (a0 + (a1 - a0) * i / n) * Math.PI / 180;
+      beamTo(cx + rx * Math.cos(a), cy - ry * Math.sin(a), i === 0);
+    }
+  }
+
+  function text(str, cx, baseline, height, track = 1.5) {
+    const s = height / 2, adv = s * track, w = (str.length - 1) * adv + s;
+    let x0 = cx - w / 2;
+    for (const ch of str) {
+      for (const st of GLYPHS[ch] || []) {
+        if (st[0] === 'L') line(x0 + st[1] * s, baseline - st[2] * s, x0 + st[3] * s, baseline - st[4] * s);
+        else arc(x0 + st[1] * s, baseline - st[2] * s, st[3] * s, st[4] * s, st[5], st[6]);
+      }
+      x0 += adv;
+    }
+  }
+
+  const pad = n => String(n).padStart(2, '0');
+  function clockParts(d) {
+    const h = d.getHours();
+    const hh = h24 ? pad(h) : pad(h % 12 || 12);
+    return { time: hh + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()), ampm: h < 12 ? 'AM' : 'PM', day: DAYS[d.getDay()], date: pad(d.getDate()) + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear() };
+  }
+
+  function polar(r, turn) { const a = turn * 2 * Math.PI; return [C + r * Math.sin(a), C - r * Math.cos(a)]; }
+
+  function analogFace(d, withDigital) {
+    arc(C, C, R * 0.97, R * 0.97, 90, -270);
+    for (let i = 0; i < 60; i++) {
+      const long = i % 5 === 0;
+      const [x0, y0] = polar(R * (long ? 0.85 : 0.9), i / 60);
+      const [x1, y1] = polar(R * 0.95, i / 60);
+      line(x0, y0, x1, y1);
+    }
+    for (let h = 1; h <= 12; h++) {
+      const [x, y] = polar(R * 0.72, h / 12);
+      text(String(h), x, y + 22, 44, 1.35);
+    }
+    const ms = d.getMilliseconds(), sec = d.getSeconds() + (reduceMotion ? 0 : ms / 1000);
+    const min = d.getMinutes() + sec / 60, hr = (d.getHours() % 12) + min / 60;
+    if (withDigital) {
+      const p = clockParts(d);
+      text(p.time, C, C + R * 0.5, 40);
+      text(p.day + ' ' + p.date.slice(0, 6), C, C - R * 0.3, 26);
+    }
+    const hand = (len, turn, back) => {
+      const [x0, y0] = polar(-back, turn), [x1, y1] = polar(len, turn);
+      line(x0, y0, x1, y1);
+    };
+    const kite = (len, turn, halfWidth) => {
+      const a = turn * 2 * Math.PI, nx = Math.cos(a), ny = Math.sin(a);
+      const [bx, by] = polar(-R * 0.05, turn), [tx, ty] = polar(len, turn), [mx, my] = polar(len * 0.22, turn);
+      const lx = mx - nx * halfWidth, ly = my - ny * halfWidth, rx = mx + nx * halfWidth, ry = my + ny * halfWidth;
+      line(bx, by, lx, ly); line(lx, ly, tx, ty); line(tx, ty, rx, ry); line(rx, ry, bx, by);
+    };
+    kite(R * 0.47, hr / 12, R * 0.045);
+    kite(R * 0.7, min / 60, R * 0.03);
+    hand(R * 0.82, sec / 60, R * 0.14);
+    arc(C, C, 9, 9, 90, -270);
+  }
+
+  function digitalFace(d) {
+    const p = clockParts(d);
+    text(p.day, C, C - 110, 54);
+    text(p.time, C, C + 55, 110);
+    text(p.date, C, C + 165, 44);
+    if (!h24) text(p.ampm, C, C + 245, 40);
+    arc(C, C, R * 0.97, R * 0.97, 90, -270);
+  }
+
+  function fontSheet() {
+    const rows = ['0123456789', 'ABCDEFGHIJ', 'KLMNOPQRS', 'TUVWXYZ:./-'];
+    rows.forEach((row, i) => text(row, C, 250 + i * 135, 80, 1.45));
+  }
+
+  function frame(now) {
+    t = now / 1000;
+    const bright = +$('bright').value, focus = +$('focus').value, persist = +$('persist').value;
+    hum = +$('hum').value * 0.6;
+    const d = new Date();
+    path = new Path2D(); retracePath = new Path2D(); last = null;
+    if (mode === 'analog') analogFace(d, false);
+    else if (mode === 'both') analogFace(d, true);
+    else if (mode === 'digital') digitalFace(d);
+    else fontSheet();
+
+    g.globalCompositeOperation = 'source-over';
+    g.shadowBlur = 0;
+    g.fillStyle = `rgba(4,8,5,${persist === 0 ? 1 : 0.6 - persist * 0.06})`;
+    g.fillRect(0, 0, N, N);
+
+    g.globalCompositeOperation = 'lighter';
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    const width = 1.2 + (10 - focus) * 0.55;
+    g.shadowColor = 'rgba(109,255,149,0.9)';
+    g.shadowBlur = 4 + (10 - focus) * 1.6;
+    g.strokeStyle = `rgba(109,255,149,${0.06 + bright * 0.045})`;
+    g.lineWidth = width;
+    g.stroke(path);
+    g.shadowBlur = 0;
+    g.strokeStyle = `rgba(220,255,230,${0.03 + bright * 0.02})`;
+    g.lineWidth = Math.max(0.8, width * 0.35);
+    g.stroke(path);
+    if (retrace) {
+      g.strokeStyle = 'rgba(109,255,149,0.16)';
+      g.lineWidth = 1;
+      g.stroke(retracePath);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  const showOut = () => SLIDERS.forEach(k => { $(k + 'Out').textContent = $(k).value; });
+  SLIDERS.forEach(k => $(k).addEventListener('input', showOut));
+  showOut();
+
+  const syncButtons = () => {
+    document.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === mode));
+    $('h24').setAttribute('aria-pressed', h24);
+    $('retrace').setAttribute('aria-pressed', retrace);
+  };
+  document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; syncButtons(); });
+  $('h24').onclick = () => { h24 = !h24; syncButtons(); };
+  $('retrace').onclick = () => { retrace = !retrace; syncButtons(); };
+  syncButtons();
+
+  function writeHash() {
+    const q = new URLSearchParams();
+    q.set('mode', mode);
+    SLIDERS.forEach(k => q.set(k, $(k).value));
+    if (h24) q.set('h24', '1');
+    if (retrace) q.set('retrace', '1');
+    const h = '#' + q.toString();
+    if (h !== location.hash) { try { history.replaceState(null, '', h); } catch (e) {} }
+  }
+  setInterval(writeHash, 1000);
+  $('copy').onclick = () => {
+    writeHash();
+    const url = location.href, msg = $('copyMsg');
+    const copied = () => { msg.textContent = 'Link copied'; setTimeout(() => { msg.textContent = ''; }, 2500); };
+    const fallback = () => { msg.textContent = url; };
+    try { navigator.clipboard.writeText(url).then(copied, fallback); } catch (e) { fallback(); }
+  };
+
+  g.fillStyle = '#040805'; g.fillRect(0, 0, N, N);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
